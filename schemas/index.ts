@@ -54,10 +54,19 @@ export function setSchemaNameOnFields(schemaMap: SchemaMap): SchemaMap {
 }
 
 function getCoreSchemas(): SchemaMap {
-  const safeMetaSchemas = metaSchemas || {};
+  // FIX: Convert arrays to maps using getMapFromList
+  const coreMap = Array.isArray(coreSchemas) 
+    ? getMapFromList(coreSchemas, 'name') 
+    : coreSchemas;
+
+  const metaMap = Array.isArray(metaSchemas) 
+    ? getMapFromList(metaSchemas, 'name') 
+    : metaSchemas;
+
+  const safeMetaSchemas = metaMap || {};
   const builtCoreSchemas = Object.assign(
     {},
-    coreSchemas,
+    coreMap,
     safeMetaSchemas
   ) as unknown as SchemaMap;
   
@@ -72,7 +81,13 @@ function getCoreSchemas(): SchemaMap {
 function getAppSchemas(countryCode: string): SchemaMap {
   const safeRegionalSchemas = regionalSchemas || {};
   const regional = safeRegionalSchemas[countryCode] ?? {};
-  return Object.assign({}, appSchemas, regional) as unknown as SchemaMap;
+
+  // FIX: Convert array to map using getMapFromList
+  const appMap = Array.isArray(appSchemas) 
+    ? getMapFromList(appSchemas, 'name') 
+    : appSchemas;
+
+  return Object.assign({}, appMap, regional) as unknown as SchemaMap;
 }
 
 function addMetaFields(schemaMap: SchemaMap): SchemaMap {

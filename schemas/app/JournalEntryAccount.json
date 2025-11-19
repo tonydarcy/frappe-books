@@ -21,8 +21,13 @@
       "fieldname": "credit",
       "label": "Credit",
       "fieldtype": "Currency"
+    },
+    {
+      "fieldname": "description",
+      "label": "Description",
+      "fieldtype": "Data"
     }
   ],
-  "tableFields": ["account", "debit", "credit"],
-  "keywordFields": ["account"]
+  "tableFields": ["account", "debit", "credit", "description"],
+  "keywordFields": ["account", "description"]
 }

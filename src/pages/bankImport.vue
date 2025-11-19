@@ -401,10 +401,11 @@ export default defineComponent({
           const jeData = {
             doctype: schemaName,
             date: tx.date,
-            entryType: 'Journal Entry', 
+            // FIX: Changed 'Journal Entry' to 'Bank Entry' for better classification
+            entryType: 'Bank Entry', 
             voucherType: 'Journal Entry',
-            title: tx.description.substring(0, 140),
-            description: tx.description.substring(0, 140),
+            // FIX: Mapped description to 'userRemark' as 'description' and 'title' do not exist in Schema
+            userRemark: tx.description.substring(0, 140),
             accounts: [
               {
                 doctype: 'JournalEntryAccount',
@@ -413,6 +414,8 @@ export default defineComponent({
                 account: debitAcc,
                 debit: val,
                 credit: 0,
+                // NOTE: 'description' field must be added to JournalEntryAccount.json (see below) 
+                // otherwise this line will be ignored or cause an error.
                 description: tx.description.substring(0, 140)
               },
               {
