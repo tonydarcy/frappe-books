@@ -1,7 +1,7 @@
 import { RawCustomField } from 'backend/database/types';
 import { cloneDeep } from 'lodash';
 import { getListFromMap, getMapFromList } from 'utils';
-// Ensure core schemas load first
+// Import app schemas first to ensure they are available
 import { appSchemas, coreSchemas, metaSchemas } from './schemas';
 import regionalSchemas from './regional/index';
 import type {
@@ -60,8 +60,11 @@ function getCoreSchemas(): SchemaMap {
     coreSchemas,
     safeMetaSchemas
   ) as unknown as SchemaMap;
+  
   for (const schemaName in builtCoreSchemas) {
-    builtCoreSchemas[schemaName].isCore = true;
+    if (builtCoreSchemas[schemaName]) {
+        builtCoreSchemas[schemaName].isCore = true;
+    }
   }
   return builtCoreSchemas;
 }
@@ -98,32 +101,24 @@ function getMetaFields(schema: Schema, schemaMap: SchemaMap): Field[] {
     fields.push(cloneDeep(NAME_FIELD));
   }
 
-  // --- DEFENSIVE CHECKS START HERE ---
-  
-  if (schema.isTree) {
-    if (schemaMap.Tree && schemaMap.Tree.fields) {
-      fields.push(...cloneDeep(schemaMap.Tree.fields));
-    }
+  // Defensive checks for meta schemas
+  if (schema.isTree && schemaMap.Tree?.fields) {
+    fields.push(...cloneDeep(schemaMap.Tree.fields));
   }
 
   if (schema.isChild) {
-    if (schemaMap.Child && schemaMap.Child.fields) {
-      fields.push(...cloneDeep(schemaMap.Child.fields));
+    if (schemaMap.Child?.fields) {
+        fields.push(...cloneDeep(schemaMap.Child.fields));
     }
   } else {
-    // This is where your error was happening (schemaMap.Base was undefined)
-    if (schemaMap.Base && schemaMap.Base.fields) {
-      fields.push(...cloneDeep(schemaMap.Base.fields));
+    if (schemaMap.Base?.fields) {
+        fields.push(...cloneDeep(schemaMap.Base.fields));
     }
   }
 
-  if (schema.isSubmittable) {
-    if (schemaMap.Submittable && schemaMap.Submittable.fields) {
-      fields.push(...cloneDeep(schemaMap.Submittable.fields));
-    }
+  if (schema.isSubmittable && schemaMap.Submittable?.fields) {
+    fields.push(...cloneDeep(schemaMap.Submittable.fields));
   }
-  
-  // --- DEFENSIVE CHECKS END ---
 
   for (const field of fields) {
     field.meta = true;
@@ -135,7 +130,7 @@ function getMetaFields(schema: Schema, schemaMap: SchemaMap): Field[] {
 function removeFields(schemaMap: SchemaMap): SchemaMap {
   for (const schemaName in schemaMap) {
     const schema = schemaMap[schemaName];
-    if (Array.isArray(schema.fields)) {
+    if (schema && Array.isArray(schema.fields)) {
         schema.fields = schema.fields.filter((f) => !f.remove);
     }
   }
