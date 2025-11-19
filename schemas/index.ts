@@ -1,7 +1,7 @@
 import { RawCustomField } from 'backend/database/types';
 import { cloneDeep } from 'lodash';
 import { getListFromMap, getMapFromList } from 'utils';
-import regionalSchemas from './regional';
+import regionalSchemas from './regional/index';
 import { appSchemas, coreSchemas, metaSchemas } from './schemas';
 import type {
   DynamicLinkField,

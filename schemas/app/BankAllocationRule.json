@@ -1,0 +1,20 @@
+{
+  "name": "BankAllocationRule",
+  "label": "Bank Rule",
+  "naming": "autoincrement",
+  "fields": [
+    {
+      "fieldname": "description_contains",
+      "label": "Description Contains",
+      "fieldtype": "Data",
+      "required": 1
+    },
+    {
+      "fieldname": "target_account",
+      "label": "Allocated Account",
+      "fieldtype": "Link",
+      "target": "Account",
+      "required": 1
+    }
+  ]
+}
