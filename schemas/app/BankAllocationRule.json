@@ -1,6 +1,6 @@
 {
   "name": "BankAllocationRule",
-  "label": "Bank Rule",
+  "label": "Bank Rules",
   "naming": "autoincrement",
   "fields": [
     {
