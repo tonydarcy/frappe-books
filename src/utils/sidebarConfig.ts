@@ -281,6 +281,11 @@ function getCompleteSidebar(): SidebarConfig {
 		  icon: 'upload-cloud' // or any other valid feather-icon name
 		},
         {
+          label: 'Import Bank Statement',
+          route: '/bank-import',
+          icon: 'upload-cloud', // or any other valid feather-icon name
+        },
+        {
           label: t`Party`,
           name: 'party',
           route: '/list/Party',
