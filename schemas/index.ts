@@ -30,14 +30,23 @@ export function getSchemas(
   const builtCoreSchemas = getCoreSchemas();
   const builtAppSchemas = getAppSchemas(countryCode);
 
-  let schemaMap = Object.assign({}, builtAppSchemas, builtCoreSchemas);
-  schemaMap = addMetaFields(schemaMap);
-  schemaMap = removeFields(schemaMap);
-  schemaMap = setSchemaNameOnFields(schemaMap);
+  const combinedSchemas = Object.assign({}, builtAppSchemas, builtCoreSchemas);
 
-  addCustomFields(schemaMap, rawCustomFields);
-  deepFreeze(schemaMap);
-  return schemaMap;
+  // Clone each schema before modifying its fields to prevent read-only errors
+  let mutableSchemaMap: SchemaMap = {};
+  for (const schemaName in combinedSchemas) {
+    if (combinedSchemas[schemaName]) {
+      mutableSchemaMap[schemaName] = cloneDeep(combinedSchemas[schemaName]!);
+    }
+  }
+
+  mutableSchemaMap = addMetaFields(mutableSchemaMap);
+  mutableSchemaMap = removeFields(mutableSchemaMap);
+  mutableSchemaMap = setSchemaNameOnFields(mutableSchemaMap);
+
+  addCustomFields(mutableSchemaMap, rawCustomFields);
+  deepFreeze(mutableSchemaMap);
+  return mutableSchemaMap;
 }
 
 export function setSchemaNameOnFields(schemaMap: SchemaMap): SchemaMap {
