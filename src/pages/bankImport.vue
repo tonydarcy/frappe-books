@@ -9,7 +9,9 @@
       dark:bg-gray-900
     "
   >
-    <PageHeader title="Bank Statement Importer" />
+    <PageHeader title="Bank Statement Importer">
+      <Button @click="goToBankRules">Manage Bank Rules</Button>
+    </PageHeader>
 
     <div
       class="flex-1 overflow-auto custom-scroll p-6 w-full max-w-5xl mx-auto"
@@ -240,6 +242,9 @@ export default defineComponent({
     this.loadAccounts();
   },
   methods: {
+    goToBankRules() {
+      this.$router.push('/list/BankRule');
+    },
     async loadAccounts() {
       if (!fyo || !fyo.db) return;
       try {
