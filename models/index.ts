@@ -3,6 +3,8 @@ import { Account } from './baseModels/Account/Account';
 import { AccountingLedgerEntry } from './baseModels/AccountingLedgerEntry/AccountingLedgerEntry';
 import { AccountingSettings } from './baseModels/AccountingSettings/AccountingSettings';
 import { Address } from './baseModels/Address/Address';
+import { BankRule } from './baseModels/BankRule/BankRule';
+import { BankRuleCondition } from './baseModels/BankRule/BankRuleCondition';
 import { Defaults } from './baseModels/Defaults/Defaults';
 import { Item } from './baseModels/Item/Item';
 import { JournalEntry } from './baseModels/JournalEntry/JournalEntry';
@@ -64,6 +66,8 @@ export const models = {
   AccountingLedgerEntry,
   AccountingSettings,
   Address,
+  BankRule,
+  BankRuleCondition,
   Batch,
   Defaults,
   Item,

@@ -1,0 +1,37 @@
+{
+  "name": "BankRuleCondition",
+  "label": "Bank Rule Condition",
+  "isChild": true,
+  "fields": [
+    {
+      "fieldname": "field",
+      "label": "Field",
+      "fieldtype": "Select",
+      "options": [
+        { "label": "Description", "value": "description" },
+        { "label": "Amount", "value": "amount" }
+      ],
+      "required": true
+    },
+    {
+      "fieldname": "operator",
+      "label": "Operator",
+      "fieldtype": "Select",
+      "options": [
+        { "label": "contains", "value": "contains" },
+        { "label": "not contains", "value": "not contains" },
+        { "label": "equals", "value": "equals" },
+        { "label": "not equals", "value": "not equals" },
+        { "label": "starts with", "value": "starts with" },
+        { "label": "ends with", "value": "ends with" }
+      ],
+      "required": true
+    },
+    {
+      "fieldname": "value",
+      "label": "Value",
+      "fieldtype": "Data",
+      "required": true
+    }
+  ]
+}

@@ -1,0 +1,39 @@
+{
+  "name": "BankRule",
+  "label": "Bank Rule",
+  "naming": "manual",
+  "fields": [
+    {
+      "fieldname": "name",
+      "label": "Name",
+      "fieldtype": "Data",
+      "required": true
+    },
+    {
+      "fieldname": "priority",
+      "label": "Priority",
+      "fieldtype": "Int",
+      "default": 0
+    },
+    {
+      "fieldname": "conditions",
+      "label": "Conditions",
+      "fieldtype": "Table",
+      "target": "BankRuleCondition",
+      "required": true
+    },
+    {
+      "fieldname": "targetAccount",
+      "label": "Target Account",
+      "fieldtype": "Link",
+      "target": "Account",
+      "required": true
+    },
+    {
+      "fieldname": "isEnabled",
+      "label": "Is Enabled",
+      "fieldtype": "Check",
+      "default": 1
+    }
+  ]
+}
