@@ -1,5 +1,57 @@
 import { Fyo } from 'fyo';
+import { BankRule } from 'models/baseModels/BankRule/BankRule';
+import { BankRuleCondition } from 'models/baseModels/BankRule/BankRuleCondition';
+import { ConditionOperator } from 'models/baseModels/BankRule/types';
+import { ModelNameEnum } from 'models/types';
 import { BankTransaction } from './bankStatementParsers';
+
+function checkCondition(
+  condition: BankRuleCondition,
+  transaction: BankTransaction
+): boolean {
+  const { field, operator, value } = condition;
+  if (!field || !operator || value === undefined || value === null) return false;
+
+  const transactionValue =
+    field === 'amount'
+      ? transaction.amount.toString()
+      : transaction.description;
+
+  switch (operator as ConditionOperator) {
+    case 'contains':
+      return transactionValue.includes(value);
+    case 'not contains':
+      return !transactionValue.includes(value);
+    case 'equals':
+      return transactionValue === value;
+    case 'not equals':
+      return transactionValue !== value;
+    case 'starts with':
+      return transactionValue.startsWith(value);
+    case 'ends with':
+      return transactionValue.endsWith(value);
+    default:
+      return false;
+  }
+}
+
+function getAccountFromRules(
+  rules: BankRule[],
+  transaction: BankTransaction
+): string | null {
+  for (const rule of rules) {
+    if (!rule.conditions || rule.conditions.length === 0) continue;
+
+    const conditionsMet = rule.conditions.every((condition) =>
+      checkCondition(condition, transaction)
+    );
+
+    if (conditionsMet && rule.targetAccount) {
+      return rule.targetAccount;
+    }
+  }
+  return null;
+}
 
 export async function importBankTransactions(
   fyo: Fyo,
@@ -23,6 +75,18 @@ export async function importBankTransactions(
     console.warn('Importer: Pre-check failed', e);
   }
 
+  const ruleDocs = (await fyo.db.getAll(ModelNameEnum.BankRule, {
+    fields: ['name'],
+    filters: { isEnabled: true },
+    orderBy: 'priority',
+    order: 'asc',
+  })) as { name: string }[];
+
+  const rules: BankRule[] = [];
+  for (const ruleDoc of ruleDocs) {
+    rules.push((await fyo.db.get(ModelNameEnum.BankRule, ruleDoc.name)) as BankRule);
+  }
+
   for (const tx of transactions) {
     if (tx.amount === 0) continue;
     if (!tx.date) continue;
@@ -31,15 +95,17 @@ export async function importBankTransactions(
     let creditAccount = '';
     let finalAmount = 0;
 
+    const otherAccount = getAccountFromRules(rules, tx) ?? suspenseAccount;
+
     // Double Entry Logic
     if (tx.amount > 0) {
-      // Deposit: Bank Debited (Increase), Suspense Credited
+      // Deposit: Bank Debited (Increase), Other Account Credited
       debitAccount = bankAccount;
-      creditAccount = suspenseAccount;
+      creditAccount = otherAccount;
       finalAmount = tx.amount;
     } else {
-      // Withdrawal: Bank Credited (Decrease), Suspense Debited
-      debitAccount = suspenseAccount;
+      // Withdrawal: Bank Credited (Decrease), Other Account Debited
+      debitAccount = otherAccount;
       creditAccount = bankAccount;
       finalAmount = Math.abs(tx.amount);
     }

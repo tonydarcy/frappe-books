@@ -15,6 +15,8 @@ export enum ModelNameEnum {
   AccountingSettings = 'AccountingSettings',
   Address = 'Address',
   Batch = 'Batch',
+  BankRule = 'BankRule',
+  BankRuleCondition = 'BankRuleCondition',
   Color = 'Color',
   Currency = 'Currency',
   GetStarted = 'GetStarted',
