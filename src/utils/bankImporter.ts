@@ -82,17 +82,11 @@ export async function importBankTransactions(
     console.warn('Importer: Pre-check failed', e);
   }
 
-  const ruleDocs = (await fyo.db.getAll(ModelNameEnum.BankRule, {
-    fields: ['name'],
+  const rules = (await fyo.db.getAll(ModelNameEnum.BankRule, {
     filters: { isEnabled: true },
     orderBy: 'priority',
     order: 'asc',
-  })) as { name: string }[];
-
-  const rules: BankRule[] = [];
-  for (const ruleDoc of ruleDocs) {
-    rules.push((await fyo.db.get(ModelNameEnum.BankRule, ruleDoc.name)) as BankRule);
-  }
+  })) as BankRule[];
 
   for (const tx of transactions) {
     if (tx.amount === 0) continue;
