@@ -64,10 +64,13 @@ function getCoreSchemas(): SchemaMap {
     : metaSchemas;
 
   const safeMetaSchemas = metaMap || {};
-  const builtCoreSchemas = Object.assign(
-    {},
-    coreMap,
-    safeMetaSchemas
+  // Ensure a deep mutable copy to prevent read-only errors when setting isCore
+  const builtCoreSchemas = cloneDeep(
+    Object.assign(
+      {},
+      coreMap,
+      safeMetaSchemas
+    )
   ) as unknown as SchemaMap;
   
   for (const schemaName in builtCoreSchemas) {
