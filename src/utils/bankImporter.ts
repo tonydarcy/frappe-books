@@ -12,24 +12,31 @@ function checkCondition(
   const { field, operator, value } = condition;
   if (!field || !operator || value === undefined || value === null) return false;
 
-  const transactionValue =
+  let transactionValue =
     field === 'amount'
       ? transaction.amount.toString()
       : transaction.description;
 
+  let conditionValue = value;
+
+  if (field === 'description') {
+    transactionValue = transactionValue.toLowerCase();
+    conditionValue = conditionValue.toLowerCase();
+  }
+
   switch (operator as ConditionOperator) {
     case 'contains':
-      return transactionValue.includes(value);
+      return transactionValue.includes(conditionValue);
     case 'not contains':
-      return !transactionValue.includes(value);
+      return !transactionValue.includes(conditionValue);
     case 'equals':
-      return transactionValue === value;
+      return transactionValue === conditionValue;
     case 'not equals':
-      return transactionValue !== value;
+      return transactionValue !== conditionValue;
     case 'starts with':
-      return transactionValue.startsWith(value);
+      return transactionValue.startsWith(conditionValue);
     case 'ends with':
-      return transactionValue.endsWith(value);
+      return transactionValue.endsWith(conditionValue);
     default:
       return false;
   }
