@@ -17,7 +17,9 @@
         />
       </svg>
 
-      <p class="dark:text-gray-100">{{ loyaltyPoints }}</p>
+      <p class="dark:text-gray-100 pr-6">
+        {{ loyaltyPoints }} - ({{ loyaltyProgram }})
+      </p>
     </div>
 
     <Int
@@ -126,6 +128,22 @@ export default defineComponent({
           return;
         }
 
+        const loyaltyProgramDoc = await this.fyo.db.getAll(
+          ModelNameEnum.LoyaltyProgram,
+          {
+            fields: ['conversionFactor', 'toDate'],
+            filters: { name: partyData.loyaltyProgram as string },
+          }
+        );
+
+        const toDate = loyaltyProgramDoc[0]?.toDate as Date;
+        const today = new Date();
+        today.setHours(0, 0, 0, 0);
+
+        if (toDate && new Date(toDate).getTime() < today.getTime()) {
+          throw new Error(t`Loyalty program has expired and cannot be applied`);
+        }
+
         if (this.loyaltyPoints >= newValue) {
           this.sinvDoc.loyaltyPoints = newValue;
         } else {
@@ -135,14 +153,6 @@ export default defineComponent({
             } points`
           );
         }
-
-        const loyaltyProgramDoc = await this.fyo.db.getAll(
-          ModelNameEnum.LoyaltyProgram,
-          {
-            fields: ['conversionFactor'],
-            filters: { name: partyData.loyaltyProgram as string },
-          }
-        );
 
         const loyaltyPoint =
           newValue * ((loyaltyProgramDoc[0]?.conversionFactor as number) || 0);

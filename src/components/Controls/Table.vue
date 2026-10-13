@@ -23,15 +23,19 @@
         <div
           v-for="df in tableFields"
           :key="df.fieldname"
-          class="items-center flex px-2 h-row-mid"
-          :class="{
-            'ms-auto': isNumeric(df),
-          }"
-          :style="{
-            height: ``,
-          }"
+          class="flex px-2 h-row-mid"
+          :class="[
+            df.sub_label
+              ? 'flex-col items-center text-center'
+              : isNumeric(df)
+              ? 'ms-auto items-center'
+              : 'items-center',
+          ]"
         >
-          {{ df.label }}
+          <span>{{ df.label }}</span>
+          <p v-if="df.sub_label" class="text-xs">
+            {{ df.sub_label }}
+          </p>
         </div>
       </Row>
 

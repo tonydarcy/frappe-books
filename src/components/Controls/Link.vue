@@ -16,8 +16,11 @@ export default {
   watch: {
     value: {
       immediate: true,
-      handler(newValue) {
+      handler(newValue, oldValue) {
         this.setLinkValue(newValue);
+        if (oldValue && !newValue) {
+          this.results = [];
+        }
       },
     },
   },
@@ -169,10 +172,16 @@ export default {
       const doc = fyo.doc.getNewDoc(schemaName, { name, ...filters });
       openQuickEdit({ doc });
 
+      const parentDoc = this.doc;
+      const fieldname = this.df.fieldname;
+
       doc.once('afterSync', () => {
         this.$router.back();
         this.results = [];
         this.triggerChange(doc.name);
+        if (parentDoc && fieldname) {
+          parentDoc.set(fieldname, doc.name).catch(() => {});
+        }
       });
     },
     async getCreateFilters() {

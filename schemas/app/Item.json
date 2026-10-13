@@ -154,10 +154,22 @@
       "section": "Inventory"
     },
     {
+      "fieldname": "batchSeries",
+      "label": "Batch Series",
+      "fieldtype": "Data",
+      "section": "Inventory"
+    },
+    {
       "fieldname": "hasSerialNumber",
       "label": "Has Serial Number",
       "fieldtype": "Check",
       "default": false,
+      "section": "Inventory"
+    },
+    {
+      "fieldname": "serialNumberSeries",
+      "label": "Serial Number Series",
+      "fieldtype": "Data",
       "section": "Inventory"
     },
     {
@@ -166,6 +178,14 @@
       "fieldtype": "Table",
       "target": "UOMConversionItem",
       "section": "Inventory"
+    },
+    {
+      "fieldname": "datafromErp",
+      "fieldtype": "Check",
+      "hidden": true,
+      "default": false,
+      "section": "Default",
+      "readOnly": true
     }
   ],
   "quickEditFields": [

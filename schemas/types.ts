@@ -57,6 +57,7 @@ export interface BaseField {
   schemaName?: string;           // Convenient access to schemaName incase just the field is passed
   required?: boolean;            // Implies Not Null
   hidden?: boolean;              // UI Facing config, whether field is shown in a form
+  invisible?: boolean;           // UI Facing config, whether field is invisible but occupies space
   readOnly?: boolean;            // UI Facing config, whether field is editable
   description?: string;          // UI Facing, translateable, used for inline documentation
   default?: RawValue;            // Default value of a field, should match the db type
@@ -67,10 +68,13 @@ export interface BaseField {
   computed?: boolean;            // Computed values are not stored in the database.
   section?: string;              // UI Facing config, for grouping by sections
   tab?: string;                  // UI Facing config, for grouping by tabs
-  abstract?: string;             // Used to mark the location of a field in an Abstract schema 
+  abstract?: string;             // Used to mark the location of a field in an Abstract schema
   isCustom?: boolean;            // Whether the field is a custom field
+  bold?: boolean;                // UI Facing config, whether to make the label bold
+  sub_label?: string;
   filters?: Record<string, string>;
-  getOptions?: () => Promise<{ label: string; value: string }[]>; 
+  getOptions?: () => Promise<{ label: string; value: string }[]>;
+  rows?: number;                 // UI Facing config, number of rows for Text field (default 3)
 }
 
 export type SelectOption = { value: string; label: string };

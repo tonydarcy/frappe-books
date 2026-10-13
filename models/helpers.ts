@@ -48,6 +48,10 @@ import {
   getStockLedgerEntries,
 } from 'reports/inventory/helpers';
 import { LoyaltyPointEntry } from './baseModels/LoyaltyPointEntry/LoyaltyPointEntry';
+import {
+  generateSerialNumbersForItem,
+  generateBatchForItem,
+} from './inventory/helpers';
 
 export function getQuoteActions(
   fyo: Fyo,
@@ -115,6 +119,11 @@ export async function getItemQtyMap(doc: SalesInvoice): Promise<ItemQtyMap> {
 
 export async function getItemVisibility(fyo: Fyo): Promise<ItemVisibility> {
   const posProfileName = fyo.singles.POSSettings?.posProfile as string;
+  const enableERPNextSync = fyo.singles.AccountingSettings?.enableERPNextSync;
+
+  if (enableERPNextSync) {
+    return fyo.singles.POSSettings?.itemVisibilityERP as ItemVisibility;
+  }
 
   if (posProfileName) {
     const posProfile = await fyo.doc.getDoc(
@@ -302,6 +311,8 @@ export function getLedgerLink(
     name: 'Report',
     params: {
       reportClassName,
+    },
+    query: {
       defaultFilters: JSON.stringify({
         referenceType: doc.schemaName,
         referenceName: doc.name,
@@ -502,6 +513,11 @@ function getSubmittableDocStatus(doc: RenderData | Doc) {
     }
   }
 
+  /**
+   * SalesQuote extends Invoice but should never show payment-related
+   * statuses (Paid, Unpaid, etc.) since quotes cannot be paid.
+   * Return early with simple submitted/cancelled/saved statuses.
+   */
   if (!!doc.submitted && !doc.cancelled) {
     return 'Submitted';
   }
@@ -533,7 +549,7 @@ export function getInvoiceStatus(doc: RenderData | Doc): InvoiceStatus {
   if (
     doc.submitted &&
     !doc.cancelled &&
-    (doc.outstandingAmount as Money).eq(doc.grandTotal as Money)
+    (doc.outstandingAmount as Money).eq(doc.baseGrandTotal as Money)
   ) {
     return 'Unpaid';
   }
@@ -546,7 +562,7 @@ export function getInvoiceStatus(doc: RenderData | Doc): InvoiceStatus {
     doc.submitted &&
     !doc.isCancelled &&
     (doc.outstandingAmount as Money).isPositive() &&
-    (doc.outstandingAmount as Money).neq(doc.grandTotal as Money)
+    (doc.outstandingAmount as Money).neq(doc.baseGrandTotal as Money)
   ) {
     return 'PartlyPaid';
   }
@@ -737,6 +753,74 @@ export function getDocStatusListColumn(): ColumnConfig {
   };
 }
 
+export function getLoyaltyProgramStatusColumn(): ColumnConfig {
+  return {
+    label: t`Status`,
+    fieldname: 'status',
+    fieldtype: 'Select',
+    render(doc) {
+      const status = getLoyaltyProgramStatus(doc);
+      const color = loyaltyProgramStatusColor[status] ?? 'gray';
+      const label = getLoyaltyProgramStatusText(status);
+
+      return {
+        template: `<Badge class="text-xs" color="${color}">${label}</Badge>`,
+        metadata: {
+          status,
+          color,
+          label,
+        },
+      };
+    },
+  };
+}
+
+export function getLoyaltyProgramStatus(doc?: RenderData | Doc): string {
+  if (!doc) {
+    return '';
+  }
+
+  const currentDate = new Date();
+  currentDate.setHours(0, 0, 0, 0);
+
+  const toDate = doc.toDate as Date;
+
+  if (toDate && toDate <= currentDate) {
+    return 'Expired';
+  }
+
+  const maximumUse = doc.maximumUse as number;
+  const used = doc.used as number;
+
+  if (maximumUse > 0 && used >= maximumUse) {
+    return 'Maxed';
+  }
+
+  return 'Active';
+}
+
+export const loyaltyProgramStatusColor: Record<string, string | undefined> = {
+  Active: 'green',
+  Disabled: 'gray',
+  Expired: 'red',
+  Maxed: 'orange',
+};
+
+export function getLoyaltyProgramStatusText(status: string): string {
+  switch (status) {
+    case 'Active':
+      return t`Active`;
+    case 'Disabled':
+      return t`Disabled`;
+    case 'Expired':
+      return t`Expired`;
+    case 'Maxed':
+      return t`Maxed`;
+    default:
+      return '';
+  }
+}
+
 type ModelsWithItems = Invoice | StockTransfer | StockMovement;
 export async function addItem<M extends ModelsWithItems>(name: string, doc: M) {
   if (!doc.canEdit) {
@@ -759,6 +843,23 @@ export async function addItem<M extends ModelsWithItems>(name: string, doc: M) {
   }
 
   await item.set('item', name);
+
+  if (doc instanceof Invoice && !doc.isSales) {
+    const batchName = await generateBatchForItem(doc.fyo, name);
+    if (batchName) {
+      await item.set('batch', batchName);
+    }
+  }
+
+  if (
+    doc instanceof StockTransfer &&
+    doc.schemaName === ModelNameEnum.PurchaseReceipt
+  ) {
+    const serialNumbers = await generateSerialNumbersForItem(doc.fyo, name, 1);
+    if (serialNumbers) {
+      await item.set('serialNumber', serialNumbers);
+    }
+  }
 }
 
 export async function getReturnLoyaltyPoints(doc: Invoice) {
@@ -872,6 +973,15 @@ export async function createLoyaltyPointEntry(doc: Invoice) {
   if (!loyaltyProgramDoc.isEnabled) {
     return;
   }
+
+  const toDate = loyaltyProgramDoc.toDate as Date;
+  const today = new Date();
+  today.setHours(0, 0, 0, 0);
+
+  if (toDate && new Date(toDate).getTime() < today.getTime()) {
+    return;
+  }
+
   const expiryDate = new Date(Date.now());
 
   expiryDate.setDate(
@@ -940,18 +1050,22 @@ export function getLoyaltyProgramTier(
   let loyaltyProgramTier: CollectionRulesItems | undefined;
 
   for (const row of loyaltyProgramData.collectionRules) {
-    if (isPesa(row.minimumTotalSpent)) {
-      const minimumSpent = row.minimumTotalSpent;
+    if (row.minimumTotalSpent !== undefined && row.minimumTotalSpent !== null) {
+      let minimumSpent: Money;
 
-      if (!minimumSpent.lte(grandTotal)) {
-        continue;
+      if (isPesa(row.minimumTotalSpent)) {
+        minimumSpent = row.minimumTotalSpent;
+      } else {
+        minimumSpent = new Money(row.minimumTotalSpent as number);
       }
 
-      if (
-        !loyaltyProgramTier ||
-        minimumSpent.gt(loyaltyProgramTier.minimumTotalSpent as Money)
-      ) {
-        loyaltyProgramTier = row;
+      if (minimumSpent.lte(grandTotal)) {
+        if (
+          !loyaltyProgramTier ||
+          minimumSpent.gt(loyaltyProgramTier.minimumTotalSpent as Money)
+        ) {
+          loyaltyProgramTier = row;
+        }
       }
     }
   }
@@ -1526,6 +1640,43 @@ export async function validateCouponCode(
   }
 }
 
+export async function validateLoyaltyProgram(
+  doc: Invoice,
+  loyaltyProgramName: string
+) {
+  const loyaltyProgram = await doc.fyo.db.getAll(ModelNameEnum.LoyaltyProgram, {
+    fields: ['fromDate', 'toDate', 'maximumUse', 'used', 'isEnabled'],
+    filters: { name: loyaltyProgramName },
+  });
+
+  if (
+    (loyaltyProgram[0]?.maximumUse as number) > 0 &&
+    (loyaltyProgram[0]?.used as number) >=
+      (loyaltyProgram[0]?.maximumUse as number)
+  ) {
+    return;
+  }
+
+  if (
+    loyaltyProgram[0].fromDate &&
+    (doc.date as Date) < (loyaltyProgram[0].fromDate as Date)
+  ) {
+    throw new ValidationError('Loyalty program is not yet active');
+  }
+
+  const toDate = loyaltyProgram[0].toDate as Date;
+  if (toDate) {
+    const today = new Date();
+    today.setHours(0, 0, 0, 0);
+    const normalizedToDate = new Date(toDate);
+    normalizedToDate.setHours(0, 0, 0, 0);
+
+    if (normalizedToDate.getTime() < today.getTime()) {
+      return;
+    }
+  }
+}
+
 export function removeFreeItems(sinvDoc: SalesInvoice) {
   if (!sinvDoc || !sinvDoc.items) {
     return;
@@ -1599,4 +1750,37 @@ export function roundFreeItemQty(
   roundingMethod: 'round' | 'floor' | 'ceil'
 ): number {
   return Math[roundingMethod](quantity);
+}
+
+export async function isLoyaltyProgramExpiredAndMaxed(
+  fyo: Fyo,
+  loyaltyProgramName: string
+): Promise<boolean> {
+  if (!loyaltyProgramName) {
+    return false;
+  }
+
+  const loyaltyProgram = await fyo.db.getAll(ModelNameEnum.LoyaltyProgram, {
+    fields: ['toDate', 'maximumUse', 'used', 'isEnabled'],
+    filters: { name: loyaltyProgramName },
+  });
+
+  if (!loyaltyProgram.length) {
+    return false;
+  }
+
+  const program = loyaltyProgram[0];
+  const currentDate = new Date();
+  currentDate.setHours(0, 0, 0, 0);
+
+  const toDate = program.toDate as Date;
+  const isExpired =
+    toDate && new Date(toDate).getTime() < currentDate.getTime();
+
+  const maximumUse = (program.maximumUse as number) || 0;
+  const used = (program.used as number) || 0;
+  const isMaxed = maximumUse > 0 && used >= maximumUse;
+
+  const result = isExpired || isMaxed;
+  return result;
 }

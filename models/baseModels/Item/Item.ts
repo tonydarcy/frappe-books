@@ -26,9 +26,12 @@ export class Item extends Doc {
   itemType?: 'Product' | 'Service';
   for?: 'Purchases' | 'Sales' | 'Both';
   hasBatch?: boolean;
+  batchSeries?: string;
   itemGroup?: string;
   hsnCode?: number;
   hasSerialNumber?: boolean;
+  serialNumberSeries?: string;
+  datafromErp?: boolean;
   uomConversions: UOMConversionItem[] = [];
 
   formulas: FormulaMap = {
@@ -92,6 +95,66 @@ export class Item extends Doc {
     });
 
     this.uomConversions = Array.from(latestByUom.values());
+
+    if (this.serialNumberSeries && this.hasSerialNumber) {
+      const series = this.serialNumberSeries.trim();
+      if (series && !series.endsWith('-')) {
+        this.serialNumberSeries = series + '-';
+      }
+    }
+
+    if (this.batchSeries && this.hasBatch) {
+      const series = this.batchSeries.trim();
+      if (series && !series.endsWith('-')) {
+        this.batchSeries = series + '-';
+      }
+    }
+  }
+
+  async afterSync(): Promise<void> {
+    await super.afterSync();
+
+    if (this.hasSerialNumber && this.serialNumberSeries) {
+      const seriesName = this.serialNumberSeries?.trim();
+
+      if (!seriesName) {
+        return;
+      }
+
+      const exists = await this.fyo.db.exists('SerialNumberSeries', seriesName);
+
+      if (!exists) {
+        await this.fyo.doc
+          .getNewDoc('SerialNumberSeries', {
+            name: seriesName,
+            start: 1001,
+            padZeros: 4,
+            current: 1001,
+          })
+          .sync();
+      }
+    }
+
+    if (this.hasBatch && this.batchSeries) {
+      const seriesName = this.batchSeries?.trim();
+
+      if (!seriesName) {
+        return;
+      }
+
+      const exists = await this.fyo.db.exists('BatchSeries', seriesName);
+
+      if (!exists) {
+        await this.fyo.doc
+          .getNewDoc('BatchSeries', {
+            name: seriesName,
+            start: 1001,
+            padZeros: 4,
+            current: 1001,
+          })
+          .sync();
+      }
+    }
   }
 
   static filters: FiltersMap = {
@@ -123,6 +186,36 @@ export class Item extends Doc {
     hsnCode: (value: DocValue) => {
       if (value && !(value as string).match(/^\d{4,8}$/)) {
         throw new ValidationError(this.fyo.t`Invalid HSN Code.`);
+      }
+    },
+    serialNumberSeries: (value: DocValue) => {
+      if (!value) {
+        return;
+      }
+
+      const series = (value as string).trim();
+      const invalidChars = /[/\=\?\&\%]/;
+
+      if (invalidChars.test(series)) {
+        throw new ValidationError(
+          this.fyo
+            .t`Serial Number Series cannot contain the following characters: /, ?, &, =, %`
+        );
+      }
+    },
+    batchSeries: (value: DocValue) => {
+      if (!value) {
+        return;
+      }
+
+      const series = (value as string).trim();
+      const invalidChars = /[/\=\?\&\%]/;
+
+      if (invalidChars.test(series)) {
+        throw new ValidationError(
+          this.fyo
+            .t`Batch Series cannot contain the following characters: /, ?, &, =, %`
+        );
       }
     },
   };
@@ -177,6 +270,8 @@ export class Item extends Doc {
       !(
         this.fyo.singles.InventorySettings?.enableSerialNumber && this.trackItem
       ),
+    serialNumberSeries: () => !this.hasSerialNumber,
+    batchSeries: () => !this.hasBatch,
     uomConversions: () =>
       !this.fyo.singles.InventorySettings?.enableUomConversions,
     itemGroup: () => !this.fyo.singles.AccountingSettings?.enableitemGroup,

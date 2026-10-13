@@ -776,9 +776,11 @@
   },
   "Georgia": {
     "code": "ge",
+    "currency": "GEL",
     "currency_fraction": "Tetri",
     "currency_fraction_units": 100,
-    "currency_symbol": "ლ",
+    "currency_name": "Georgian Lari",
+    "currency_symbol": "₾",
     "timezones": ["Asia/Tbilisi"],
     "locale": "ka-GE"
   },
@@ -1126,6 +1128,16 @@
     "currency": "KRW",
     "currency_name": "Won",
     "locale": "ko-KR"
+  },
+  "Kosovo": {
+    "code": "xk",
+    "currency": "EUR",
+    "currency_fraction": "Cent",
+    "currency_fraction_units": 100,
+    "currency_name": "Euro",
+    "currency_symbol": "€",
+    "timezones": ["Europe/Skopje"],
+    "locale": "sq-XK"
   },
   "Kuwait": {
     "code": "kw",
