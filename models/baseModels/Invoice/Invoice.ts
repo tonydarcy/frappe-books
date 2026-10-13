@@ -88,6 +88,7 @@ export abstract class Invoice extends Transactional {
   account?: string;
   currency?: string;
   priceList?: string;
+  project?: string;
   netTotal?: Money;
   grandTotal?: Money;
   baseGrandTotal?: Money;
@@ -1379,6 +1380,7 @@ export abstract class Invoice extends Transactional {
     pricingRuleDetail: () =>
       !this.fyo.singles.AccountingSettings?.enablePricingRule ||
       !this.pricingRuleDetail?.length,
+    project: () => !this.fyo.singles.AccountingSettings?.enableProjects,
   };
 
   static defaults: DefaultMap = {
@@ -1413,6 +1415,10 @@ export abstract class Invoice extends Transactional {
       isEnabled: true,
       ...(doc.isSales ? { isSales: true } : { isPurchase: true }),
     }),
+    project: (doc: Doc) =>
+      doc.fyo.singles.AccountingSettings?.enableProjects
+        ? { status: 'Active' }
+        : {},
   };
 
   static createFilters: FiltersMap = {
