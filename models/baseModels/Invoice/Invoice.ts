@@ -28,6 +28,9 @@ import {
   getReturnLoyaltyPoints,
   getItemQtyMap,
   getItemVisibility,
+  validateLoyaltyProgram,
+  getLoyaltyProgramTier,
+  isLoyaltyProgramExpiredAndMaxed,
 } from 'models/helpers';
 import { StockTransfer } from 'models/inventory/StockTransfer';
 import { validateBatch } from 'models/inventory/helpers';
@@ -94,6 +97,7 @@ export abstract class Invoice extends Transactional {
   discountAmount?: Money;
   discountPercent?: number;
   loyaltyPoints?: number;
+  availableLoyaltyPoints?: number;
   discountAfterTax?: boolean;
   stockNotTransferred?: number;
   loyaltyProgram?: string;
@@ -195,6 +199,23 @@ export abstract class Invoice extends Transactional {
     if (this.isQuote) {
       return;
     }
+    if (!this.submitted && this.loyaltyProgram) {
+      const isExpiredOrMaxed = await isLoyaltyProgramExpiredAndMaxed(
+        this.fyo,
+        this.loyaltyProgram
+      );
+
+      if (isExpiredOrMaxed) {
+        const { showToast } = await import('src/utils/interactive');
+
+        showToast({
+          type: 'warning',
+          message: t`Loyalty program has expired or reached maximum usage`,
+          duration: 'short',
+        });
+      }
+    }
+
     if (
       this.enableDiscounting &&
       !this.fyo.singles?.AccountingSettings?.discountAccount
@@ -211,12 +232,48 @@ export abstract class Invoice extends Transactional {
       this.party
     )) as Party;
 
-    if ((this.loyaltyPoints as number) > (partyDoc?.loyaltyPoints || 0)) {
+    if (this.redeemLoyaltyPoints && (this.loyaltyPoints as number) > 0) {
+      const currentPoints = partyDoc?.loyaltyPoints || 0;
+
+      let pointsToBeEarned = 0;
+      if (!this.isReturn && this.loyaltyProgram) {
+        const loyaltyProgramDoc = (await this.fyo.doc.getDoc(
+          ModelNameEnum.LoyaltyProgram,
+          this.loyaltyProgram
+        )) as LoyaltyProgram;
+
+        const tier = getLoyaltyProgramTier(
+          loyaltyProgramDoc,
+          this?.grandTotal as Money
+        );
+
+        if (tier) {
+          const collectionFactor = tier.collectionFactor as number;
+          pointsToBeEarned =
+            Math.round(this?.grandTotal?.float || 0) * collectionFactor;
+        }
+      }
+
+      const totalAvailablePoints = currentPoints + pointsToBeEarned;
+      if ((this.loyaltyPoints as number) > totalAvailablePoints) {
+        throw new ValidationError(
+          t`${
+            this.party as string
+          } only has ${currentPoints} points (${pointsToBeEarned} will be earned from this transaction)`
+        );
+      }
+    } else if (
+      (this.loyaltyPoints as number) > (partyDoc?.loyaltyPoints || 0)
+    ) {
       throw new ValidationError(
         t`${this.party as string} only has ${
           partyDoc.loyaltyPoints as number
         } points`
       );
+    }
+
+    if (this.loyaltyProgram) {
+      await validateLoyaltyProgram(this, this.loyaltyProgram);
     }
   }
 
@@ -274,6 +331,10 @@ export abstract class Invoice extends Transactional {
     if (this.schemaName === ModelNameEnum.SalesInvoice) {
       this.updateUsedCountOfCoupons();
     }
+
+    if (this.loyaltyProgram) {
+      await this.updateUsedCountOfLoyaltyProgram();
+    }
   }
 
   async afterCancel() {
@@ -283,6 +344,10 @@ export abstract class Invoice extends Transactional {
     await this._updateIsItemsReturned();
     await this._removeLoyaltyPointEntry();
     this.reduceUsedCountOfCoupons();
+
+    if (this.loyaltyProgram) {
+      await this.reduceUsedCountOfLoyaltyProgram();
+    }
   }
 
   async _removeLoyaltyPointEntry() {
@@ -486,7 +551,7 @@ export abstract class Invoice extends Transactional {
           return a.abs().add(b.abs()).neg();
         }
 
-        return a.add(b.abs());
+        return a.add(b);
       }, (this.netTotal as Money).abs())
       .sub(totalDiscount);
 
@@ -711,17 +776,26 @@ export abstract class Invoice extends Transactional {
         if (item.batch) {
           const returnData = totalQtyOfReturnedItems[item.item as string];
           if (typeof returnData === 'object' && returnData?.batches) {
-            returnDocItems = docItems.map((docItem) => ({
-              ...docItem,
-              name: undefined,
-              quantity: -returnData?.batches![docItem.batch as string] || 0,
-            }));
+            returnDocItems = docItems.map((docItem: DocValueMap) => {
+              const qty = -returnData?.batches![docItem.batch as string] || 0;
+              const transferQty =
+                qty / ((docItem.unitConversionFactor as number) || 1);
+              return {
+                ...docItem,
+                name: undefined,
+                quantity: qty,
+                transferQuantity: transferQty,
+              };
+            });
           }
         } else {
-          returnDocItems = docItems.map((docItem) => ({
+          returnDocItems = docItems.map((docItem: DocValueMap) => ({
             ...docItem,
             name: undefined,
             quantity: -(totalQtyOfReturnedItems[docItem.item as string] || 0),
+            qty:
+              -(totalQtyOfReturnedItems[docItem.item as string] as number) /
+              (item.unitConversionFactor as number),
             transferQuantity: -(
               (totalQtyOfReturnedItems[docItem.item as string] as number) /
               (item.unitConversionFactor as number)
@@ -787,6 +861,7 @@ export abstract class Invoice extends Transactional {
         serialNumber,
         name: undefined,
         quantity: quantity,
+        qty: transferQuantity,
         transferQuantity,
       });
     }
@@ -835,6 +910,63 @@ export abstract class Invoice extends Transactional {
 
       await couponDoc.setAndSync({ used: (couponDoc.used as number) - 1 });
     });
+  }
+
+  async updateUsedCountOfLoyaltyProgram() {
+    if (!this.loyaltyProgram) {
+      return;
+    }
+
+    const loyaltyProgramDoc = await this.fyo.doc.getDoc(
+      ModelNameEnum.LoyaltyProgram,
+      this.loyaltyProgram
+    );
+
+    const maximumUse = loyaltyProgramDoc.maximumUse as number;
+    const used = (loyaltyProgramDoc.used as number) || 0;
+
+    if (this.redeemLoyaltyPoints) {
+      const newUsedCount = used + 1;
+
+      if (maximumUse > 0 && newUsedCount >= maximumUse) {
+        await loyaltyProgramDoc.setAndSync({
+          used: newUsedCount,
+          isEnabled: false,
+        });
+      } else {
+        await loyaltyProgramDoc.setAndSync({
+          used: newUsedCount,
+        });
+      }
+    }
+  }
+
+  async reduceUsedCountOfLoyaltyProgram() {
+    if (!this.loyaltyProgram) {
+      return;
+    }
+
+    const loyaltyProgramDoc = await this.fyo.doc.getDoc(
+      ModelNameEnum.LoyaltyProgram,
+      this.loyaltyProgram
+    );
+
+    const maximumUse = loyaltyProgramDoc.maximumUse as number;
+    const used = (loyaltyProgramDoc.used as number) || 0;
+    const newUsedCount = used - 1;
+
+    if (this.redeemLoyaltyPoints) {
+      if (newUsedCount < maximumUse) {
+        await loyaltyProgramDoc.setAndSync({
+          used: newUsedCount,
+          isEnabled: true,
+        });
+      } else {
+        await loyaltyProgramDoc.setAndSync({
+          used: newUsedCount,
+        });
+      }
+    }
   }
 
   async updateIsItemsFullyReturned(doc?: Invoice) {
@@ -897,11 +1029,27 @@ export abstract class Invoice extends Transactional {
       this.loyaltyProgram
     )) as LoyaltyProgram;
 
-    const expiryDate = this.date as Date;
+    const invoiceDate = this.date as Date;
     const fromDate = loyaltyProgramDoc.fromDate as Date;
     const toDate = loyaltyProgramDoc.toDate as Date;
 
-    if (fromDate <= expiryDate && toDate >= expiryDate) {
+    const normalizedInvoiceDate = new Date(invoiceDate);
+    normalizedInvoiceDate.setHours(0, 0, 0, 0);
+
+    const normalizedFromDate = new Date(fromDate);
+    normalizedFromDate.setHours(0, 0, 0, 0);
+
+    const normalizedToDate = new Date(toDate);
+    normalizedToDate.setHours(0, 0, 0, 0);
+
+    if (normalizedToDate.getTime() < normalizedInvoiceDate.getTime()) {
+      return;
+    }
+
+    if (
+      normalizedInvoiceDate.getTime() >= normalizedFromDate.getTime() &&
+      normalizedInvoiceDate.getTime() <= normalizedToDate.getTime()
+    ) {
       const party = (await this.loadAndGetLink('party')) as Party;
 
       await createLoyaltyPointEntry(this);
@@ -988,9 +1136,41 @@ export abstract class Invoice extends Transactional {
           ModelNameEnum.Party,
           this.party
         );
-        return partyDoc?.loyaltyProgram as string;
+        const loyaltyProgramName = partyDoc?.loyaltyProgram as string;
+
+        if (!loyaltyProgramName) {
+          return '';
+        }
+
+        return loyaltyProgramName;
       },
       dependsOn: ['party', 'name'],
+    },
+    availableLoyaltyPoints: {
+      formula: async () => {
+        if (!this.party) {
+          return 0;
+        }
+
+        const loyaltyProgramName = this.loyaltyProgram as string;
+        if (loyaltyProgramName) {
+          const isExpiredAndMaxed = await isLoyaltyProgramExpiredAndMaxed(
+            this.fyo,
+            loyaltyProgramName
+          );
+          if (isExpiredAndMaxed) {
+            return 0;
+          }
+        }
+
+        const loyaltyPoints = await this.fyo.getValue(
+          ModelNameEnum.Party,
+          this.party,
+          'loyaltyPoints'
+        );
+        return loyaltyPoints || 0;
+      },
+      dependsOn: ['party', 'loyaltyProgram'],
     },
     currency: {
       formula: async () => {
@@ -1181,8 +1361,15 @@ export abstract class Invoice extends Transactional {
     backReference: () => !this.backReference,
     quote: () => !this.quote,
     loyaltyProgram: () => !this.loyaltyProgram,
+    availableLoyaltyPoints: () => !this.loyaltyProgram || this.isReturn,
     loyaltyPoints: () => !this.redeemLoyaltyPoints || this.isReturn,
-    redeemLoyaltyPoints: () => !this.loyaltyProgram || this.isReturn,
+    redeemLoyaltyPoints: () => {
+      if (!this.loyaltyProgram || this.isReturn) {
+        return true;
+      }
+
+      return (this.availableLoyaltyPoints ?? 0) <= 0;
+    },
     coupons: () => this.isSubmitted && !this.coupons?.length,
     priceList: () =>
       !this.fyo.singles.AccountingSettings?.enablePriceList ||

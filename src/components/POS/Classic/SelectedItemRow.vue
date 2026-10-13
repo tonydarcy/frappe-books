@@ -2,10 +2,10 @@
   <feather-icon
     :name="isExapanded ? 'chevron-up' : 'chevron-down'"
     class="w-4 h-4 inline-flex cursor-pointer text-gray-700 dark:text-gray-200"
-    @click="isExapanded = !isExapanded"
+    @click="toggleExpand"
   />
 
-  <div class="relative" @click="emitSelectedRow">
+  <div class="relative" @click="toggleExpandAndEmit">
     <Link
       class="pt-2"
       :df="{
@@ -27,7 +27,7 @@
     </p>
   </div>
 
-  <div class="flex items-center" @click="emitSelectedRow">
+  <div class="flex items-center">
     <Int
       :df="{
         fieldname: 'quantity',
@@ -36,7 +36,7 @@
       }"
       size="small"
       :border="false"
-      :value="row.quantity"
+      :value="getDisplayTransferQuantity()"
       :read-only="true"
     />
     <div class="flex flex-col ml-1">
@@ -70,13 +70,13 @@
   <Link
     class="ml-5"
     :df="{
-      fieldname: 'unit',
+      fieldname: 'transferUnit',
       fieldtype: 'Data',
       label: 'Unit',
     }"
     size="small"
     :border="false"
-    :value="row.unit"
+    :value="row.transferUnit || row.unit"
     :read-only="true"
   />
 
@@ -115,7 +115,7 @@
   <div></div>
 
   <template v-if="isExapanded">
-    <div class="px-4 pt-6 col-span-1" @click="emitSelectedRow">
+    <div class="px-4 pt-6 col-span-1">
       <Int
         v-if="isUOMConversionEnabled"
         :df="{
@@ -133,18 +133,19 @@
     </div>
 
     <div class="px-4 pt-6 col-span-2">
-      <Link
-        v-if="isUOMConversionEnabled"
+      <AutoComplete
+        v-if="isUOMConversionEnabled && transferUnitOptions.length"
+        :key="row.item"
         :df="{
+          fieldtype: 'AutoComplete',
           fieldname: 'transferUnit',
-          fieldtype: 'Link',
-          target: 'UOM',
           label: t`Transfer Unit`,
+          options: transferUnitOptions,
         }"
         class="flex-1"
         :show-label="true"
         :border="true"
-        :value="row.transferUnit"
+        :value="row.transferUnit ?? ''"
         @change="(value:string) => row.set('transferUnit', value)"
         :read-only="isReadOnly"
       />
@@ -266,7 +267,7 @@
           fieldtype: 'Text',
           fieldname: 'serialNumber',
         }"
-        :value="row.serialNumber"
+        :value="itemSerialNumbers[row.item as string] || row.serialNumber"
         :show-label="true"
         :border="true"
         :required="hasSerialNumber"
@@ -285,7 +286,7 @@ import Link from 'src/components/Controls/Link.vue';
 import Text from 'src/components/Controls/Text.vue';
 import { inject } from 'vue';
 import { fyo } from 'src/initFyo';
-import { defineComponent } from 'vue';
+import { defineComponent, PropType } from 'vue';
 import { SalesInvoiceItem } from 'models/baseModels/SalesInvoiceItem/SalesInvoiceItem';
 import { Money } from 'pesa';
 import { DiscountType } from '../types';
@@ -295,15 +296,26 @@ import { InvoiceItem } from 'models/baseModels/InvoiceItem/InvoiceItem';
 import { SalesInvoice } from 'models/baseModels/SalesInvoice/SalesInvoice';
 import { showToast } from 'src/utils/interactive';
 import { ModelNameEnum } from 'models/types';
+import AutoComplete from 'src/components/Controls/AutoComplete.vue';
+import { getExistingActiveSerialNumbersForItem } from 'models/inventory/helpers';
 
 export default defineComponent({
   name: 'SelectedItemRow',
-  components: { Currency, Data, Float, Int, Link, Text },
+  components: { Currency, Data, Float, Int, Link, Text, AutoComplete },
   props: {
     row: { type: SalesInvoiceItem, required: true },
     batchAdded: { type: Boolean, default: false },
+    expandedBatchId: {
+      type: String as PropType<string | null | undefined>,
+      default: undefined,
+    },
   },
-  emits: ['runSinvFormulas', 'applyPricingRule', 'selectedRow'],
+  emits: [
+    'runSinvFormulas',
+    'applyPricingRule',
+    'selectedRow',
+    'setExpandedBatchId',
+  ],
   setup() {
     return {
       isDiscountingEnabled: inject('isDiscountingEnabled') as boolean,
@@ -321,17 +333,97 @@ export default defineComponent({
       defaultRate: this.row.rate as Money,
       profileDiscountSetting: null as boolean | null,
       profileRateSetting: null as boolean | null,
+      transferUnitOptions: [] as Array<{ label: string; value: string }>,
+      isMounted: false,
+      pendingTransferUnitChange: false,
+      transferUnitChangeOldQty: 0,
     };
   },
   watch: {
+    expandedBatchId(newVal) {
+      if (newVal !== this.row.name) {
+        this.isExapanded = false;
+      }
+    },
     'row.batch': {
       async handler(newBatch) {
         if (newBatch) {
           this.availableQtyInBatch = await this.getAvailableQtyInBatch();
           this.isExapanded = true;
+          this.$emit('setExpandedBatchId', this.row.name);
         }
       },
       immediate: true,
+    },
+    'row.item': {
+      async handler(newItem) {
+        if (newItem) {
+          await this.updateTransferUnitOptions();
+        } else {
+          this.transferUnitOptions = [];
+        }
+      },
+      immediate: true,
+    },
+    'row.quantity': {
+      async handler(newQuantity, oldQuantity) {
+        if (
+          this.hasSerialNumber &&
+          newQuantity &&
+          newQuantity > 0 &&
+          this.isMounted &&
+          newQuantity !== oldQuantity
+        ) {
+          await this.fetchSerialNumbers(false, true);
+        }
+      },
+      immediate: false,
+    },
+    'row.transferQuantity': {
+      async handler(newTransferQuantity, oldTransferQuantity) {
+        if (
+          this.pendingTransferUnitChange &&
+          newTransferQuantity !== this.transferUnitChangeOldQty
+        ) {
+          this.pendingTransferUnitChange = false;
+          this.transferUnitChangeOldQty = 0;
+
+          await this.fetchSerialNumbers(true, false);
+          return;
+        }
+
+        if (
+          this.isUOMConversionEnabled &&
+          this.hasSerialNumber &&
+          newTransferQuantity &&
+          newTransferQuantity > 0 &&
+          this.isMounted &&
+          newTransferQuantity !== oldTransferQuantity &&
+          !this.pendingTransferUnitChange
+        ) {
+          await this.fetchSerialNumbers(false, false);
+        }
+      },
+      immediate: false,
+    },
+    'row.transferUnit': {
+      async handler(newTransferUnit, oldTransferUnit) {
+        if (
+          this.isUOMConversionEnabled &&
+          this.hasSerialNumber &&
+          newTransferUnit &&
+          oldTransferUnit &&
+          newTransferUnit !== oldTransferUnit &&
+          this.isMounted
+        ) {
+          delete this.itemSerialNumbers[this.row.item as string];
+          await this.row.set('serialNumber', '');
+
+          this.pendingTransferUnitChange = true;
+          this.transferUnitChangeOldQty = this.row.transferQuantity ?? 0;
+        }
+      },
+      immediate: false,
     },
   },
   computed: {
@@ -378,9 +470,30 @@ export default defineComponent({
       this.profileRateSetting = !!this.fyo.singles.POSSettings?.canChangeRate;
       this.itemVisibility = await getItemVisibility(this.fyo);
     }
+
+    await this.$nextTick();
+
+    this.isMounted = true;
+
+    if (this.hasSerialNumber) {
+      await this.fetchSerialNumbers();
+    }
   },
 
   methods: {
+    toggleExpand() {
+      if (this.isExapanded) {
+        this.isExapanded = false;
+        this.$emit('setExpandedBatchId', undefined);
+      } else {
+        this.isExapanded = true;
+        this.$emit('setExpandedBatchId', this.row.name);
+      }
+    },
+    toggleExpandAndEmit() {
+      this.toggleExpand();
+      this.$emit('selectedRow', this.row);
+    },
     emitSelectedRow() {
       this.$emit('selectedRow', this.row);
     },
@@ -394,6 +507,37 @@ export default defineComponent({
 
       this.setQuantity(newQuantity);
     },
+    async updateTransferUnitOptions() {
+      if (!this.row.item) {
+        this.transferUnitOptions = [];
+        return;
+      }
+
+      const itemDoc = await fyo.doc.getDoc('Item', this.row.item as string);
+
+      const conversions = (itemDoc?.uomConversions ?? []) as Array<{
+        uom: string;
+        conversionFactor: number;
+      }>;
+
+      const allowedUoms = new Set<string>();
+
+      if (typeof itemDoc?.unit === 'string') {
+        allowedUoms.add(itemDoc.unit);
+      }
+
+      for (const c of conversions) {
+        if (typeof c.uom === 'string') {
+          allowedUoms.add(c.uom);
+        }
+      }
+
+      this.transferUnitOptions = [...allowedUoms].map((uom) => ({
+        label: uom,
+        value: uom,
+      }));
+    },
+
     async getAvailableQtyInBatch(): Promise<number> {
       if (!this.row.batch) {
         return 0;
@@ -439,6 +583,8 @@ export default defineComponent({
       if (!serialNumber) {
         return;
       }
+
+      this.row.set('serialNumber', serialNumber);
       this.itemSerialNumbers[this.row.item as string] = serialNumber;
 
       validateSerialNumberCount(
@@ -446,6 +592,52 @@ export default defineComponent({
         Math.abs(this.row.quantity ?? 0),
         this.row.item!
       );
+    },
+    async fetchSerialNumbers(forceRefetch = false, useDirectQuantity = false) {
+      if (!this.hasSerialNumber) {
+        return;
+      }
+
+      let quantity = 0;
+      if (useDirectQuantity) {
+        quantity = Math.abs(this.row.quantity ?? 0);
+      } else if (this.isUOMConversionEnabled && this.row.transferQuantity) {
+        quantity = Math.abs(this.row.transferQuantity);
+      } else if (this.row.quantity) {
+        quantity = Math.abs(this.row.quantity);
+      }
+
+      if (quantity <= 0) {
+        return;
+      }
+
+      const existingSerialNumbers =
+        this.itemSerialNumbers[this.row.item as string];
+
+      if (existingSerialNumbers && !forceRefetch) {
+        const existingCount = existingSerialNumbers
+          .split('\n')
+          .filter((s) => s.trim()).length;
+
+        if (existingCount === quantity) {
+          return;
+        } else {
+        }
+      }
+
+      try {
+        const serialNumbers = await getExistingActiveSerialNumbersForItem(
+          this.fyo,
+          this.row.item as string,
+          quantity
+        );
+
+        if (serialNumbers) {
+          await this.row.set('serialNumber', serialNumbers);
+          this.itemSerialNumbers[this.row.item as string] = serialNumbers;
+        } else {
+        }
+      } catch (error) {}
     },
     isRateReadOnly() {
       const canChangeRate = this.profileRateSetting;
@@ -470,6 +662,7 @@ export default defineComponent({
         !hasManualDiscount && this.row.itemDiscountPercent !== 0;
       const manualDiscountAmount = this.row.itemDiscountAmount;
       const manualDiscountPercent = this.row.itemDiscountPercent;
+
       if (!this.row.isReturn && quantity <= 0) {
         showToast({
           type: 'error',

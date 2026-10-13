@@ -53,6 +53,10 @@
     >
       <SelectedItemRow
         :row="(row as SalesInvoiceItem)"
+        :expanded-batch-id="expandedBatchId"
+        @set-expanded-batch-id="
+          (rowName) => $emit('setExpandedBatchId', rowName)
+        "
         @run-sinv-formulas="runSinvFormulas"
         @apply-pricing-rule="$emit('applyPricingRule')"
         @selected-row="selectedItemRow"
@@ -70,7 +74,7 @@ import RowEditForm from 'src/pages/CommonForm/RowEditForm.vue';
 import SelectedItemRow from './SelectedItemRow.vue';
 import { isNumeric } from 'src/utils';
 import { inject } from 'vue';
-import { defineComponent } from 'vue';
+import { defineComponent, PropType } from 'vue';
 import { SalesInvoiceItem } from 'models/baseModels/SalesInvoiceItem/SalesInvoiceItem';
 import { SalesInvoice } from 'models/baseModels/SalesInvoice/SalesInvoice';
 import { Field } from 'schemas/types';
@@ -90,12 +94,13 @@ export default defineComponent({
       sinvDoc: inject('sinvDoc') as SalesInvoice,
     };
   },
-  data() {
-    return {
-      isExapanded: false,
-    };
+  props: {
+    expandedBatchId: {
+      type: String as PropType<string | null | undefined>,
+      default: undefined,
+    },
   },
-  emits: ['applyPricingRule', 'selectedRow'],
+  emits: ['applyPricingRule', 'selectedRow', 'setExpandedBatchId'],
   computed: {
     ratio() {
       return [0.1, 0.9, 0.8, 0.8, 0.8, 0.8, 0.2];
@@ -125,7 +130,7 @@ export default defineComponent({
         },
         {
           fieldname: 'unit',
-          label: 'Stock Unit',
+          label: 'Unit Type',
           placeholder: 'Unit',
           fieldtype: 'Link',
           required: true,

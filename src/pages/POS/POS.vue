@@ -20,12 +20,14 @@
       :total-quantity="totalQuantity"
       :item-quantity-qap="itemQtyMap"
       :loyalty-points="loyaltyPoints"
+      :loyalty-program="loyaltyProgram"
       :open-alert-modal="openAlertModal"
       :default-customer="defaultCustomer"
       :item-search-term="itemSearchTerm"
       :selected-item-group="selectedItemGroup"
       :is-pos-shift-open="isPosShiftOpen"
       :items="(items as [] as POSItem[])"
+      :item-visibility="itemVisibility"
       :sinv-doc="(sinvDoc as SalesInvoice)"
       :disable-pay-button="disablePayButton"
       :open-payment-modal="openPaymentModal"
@@ -42,6 +44,8 @@
       :open-return-sales-invoice-modal="openReturnSalesInvoiceModal"
       :open-batch-selection-modal="openBatchSelectionModal"
       :selected-item-for-batch="selectedItemForBatch"
+      :expanded-batch-id="expandedBatchId"
+      @set-expanded-batch-id="setExpandedBatchId"
       @add-item="addItem"
       @toggle-view="toggleView"
       @set-sinv-doc="setSinvDoc"
@@ -75,12 +79,14 @@
       :total-quantity="totalQuantity"
       :item-quantity-qap="itemQtyMap"
       :loyalty-points="loyaltyPoints"
+      :loyalty-program="loyaltyProgram"
       :open-alert-modal="openAlertModal"
       :default-customer="defaultCustomer"
       :item-search-term="itemSearchTerm"
       :selected-item-group="selectedItemGroup"
       :is-pos-shift-open="isPosShiftOpen"
       :items="(items as [] as POSItem[])"
+      :item-visibility="itemVisibility"
       :sinv-doc="(sinvDoc as SalesInvoice)"
       :disable-pay-button="disablePayButton"
       :open-payment-modal="openPaymentModal"
@@ -98,6 +104,8 @@
       :open-return-sales-invoice-modal="openReturnSalesInvoiceModal"
       :open-batch-selection-modal="openBatchSelectionModal"
       :selected-item-for-batch="selectedItemForBatch"
+      :expanded-batch-id="expandedBatchId"
+      @set-expanded-batch-id="setExpandedBatchId"
       @add-item="addItem"
       @toggle-view="toggleView"
       @set-sinv-doc="setSinvDoc"
@@ -164,13 +172,16 @@ import {
   removeFreeItems,
   getItemRateFromPriceList,
   getItemVisibility,
+  isLoyaltyProgramExpiredAndMaxed,
 } from 'models/helpers';
+import { ItemVisibility } from 'src/components/POS/types';
 import {
   POSItem,
   ItemQtyMap,
   ItemSerialNumbers,
 } from 'src/components/POS/types';
 import { ValidationError } from 'fyo/utils/errors';
+import { getExistingActiveSerialNumbersForItem } from 'models/inventory/helpers';
 
 const COMPONENT_NAME = 'POS';
 
@@ -259,6 +270,8 @@ export default defineComponent({
       quickQtyKeyUpHandler: null as ((e: KeyboardEvent) => void) | null,
       selectedItemForBatch: '' as string,
       pendingBatchItem: null as { item: POSItem; quantity: number } | null,
+      expandedBatchId: undefined as string | null | undefined,
+      itemVisibilityValue: 'Inventory Items' as ItemVisibility,
     };
   },
   computed: {
@@ -268,6 +281,9 @@ export default defineComponent({
       return !!fyo.singles.AccountingSettings?.enableDiscounting;
     },
     isPosShiftOpen: () => !!fyo.singles.POSSettings?.isShiftOpen,
+    itemVisibility() {
+      return this.itemVisibilityValue;
+    },
     disablePayButton(): boolean {
       if (!this.sinvDoc.items?.length || !this.sinvDoc.party) {
         return true;
@@ -292,6 +308,7 @@ export default defineComponent({
   async mounted() {
     await this.setItems();
     await this.loadPOSProfile();
+    this.itemVisibilityValue = await getItemVisibility(this.fyo);
   },
   async activated() {
     toggleSidebar(false);
@@ -313,6 +330,9 @@ export default defineComponent({
   methods: {
     setQuickQtySelectedRow(row: SalesInvoiceItem) {
       this.quickQtyRow = row;
+    },
+    setExpandedBatchId(rowName: string | null) {
+      this.expandedBatchId = rowName;
     },
     addQuickQtyListeners() {
       this.quickQtyKeyDownHandler = (e: KeyboardEvent) =>
@@ -492,7 +512,21 @@ export default defineComponent({
         filters: { name: value },
       });
 
-      this.loyaltyProgram = party[0]?.loyaltyProgram as string;
+      const loyaltyProgramName = party[0]?.loyaltyProgram as string;
+
+      if (loyaltyProgramName) {
+        const isExpiredAndMaxed = await isLoyaltyProgramExpiredAndMaxed(
+          this.fyo,
+          loyaltyProgramName
+        );
+        if (isExpiredAndMaxed) {
+          this.loyaltyProgram = loyaltyProgramName;
+          this.loyaltyPoints = 0;
+          return;
+        }
+      }
+
+      this.loyaltyProgram = loyaltyProgramName;
       this.loyaltyPoints = party[0]?.loyaltyPoints as number;
     },
 
@@ -641,7 +675,8 @@ export default defineComponent({
           this.fyo.singles.AccountingSettings?.enablePriceList &&
           this.loyaltyPoints &&
           this.sinvDoc.party &&
-          this.sinvDoc.items?.length
+          this.sinvDoc.items?.length &&
+          this.loyaltyProgram
         ) {
           this.toggleModal('LoyaltyProgram', true);
         }
@@ -691,8 +726,11 @@ export default defineComponent({
 
       if (itemVisibility === 'Inventory Items') {
         filters.trackItem = true;
-      } else {
+      } else if (itemVisibility === 'ERP Sync Items') {
+        filters.datafromErp = true;
+      } else if (itemVisibility === 'Non-Inventory Items') {
         filters.trackItem = false;
+        filters.datafromErp = false;
       }
 
       if (this.selectedItemGroup) {
@@ -850,26 +888,27 @@ export default defineComponent({
           return;
         }
 
+        const itemName = item.name;
+
         if (item.hasBatch) {
-          this.selectedItemForBatch = item.name;
+          this.selectedItemForBatch = itemName;
           this.pendingBatchItem = { item, quantity: quantity ?? 1 };
 
           this.toggleModal('BatchSelection', true);
-
           return;
         }
 
         const isInventoryItem = await this.fyo.getValue(
           ModelNameEnum.Item,
-          item.name,
+          itemName,
           'trackItem'
         );
 
         if (isInventoryItem) {
-          const availableQty = this.itemQtyMap[item.name]?.availableQty ?? 0;
+          const availableQty = this.itemQtyMap[itemName]?.availableQty ?? 0;
           if (availableQty <= 0) {
             throw new ValidationError(
-              t`Item  is out of stock (quantity is zero)`
+              t`Item ${itemName} is out of stock (quantity is zero)`
             );
           }
         }
@@ -877,7 +916,7 @@ export default defineComponent({
         const existingItems =
           this.sinvDoc.items?.filter(
             (invoiceItem) =>
-              invoiceItem.item === item.name && !invoiceItem.isFreeItem
+              invoiceItem.item === itemName && !invoiceItem.isFreeItem
           ) ?? [];
 
         await validateQty(
@@ -888,7 +927,7 @@ export default defineComponent({
 
         const itemsHsncode = (await this.fyo.getValue(
           'Item',
-          item?.name,
+          itemName,
           'hsnCode'
         )) as number;
 
@@ -896,21 +935,38 @@ export default defineComponent({
           const addQty = quantity ?? 1;
 
           if (existingItems.length > 0) {
-            for (let item of existingItems) {
-              const availableQty = await fyo.db.getStockQuantity(
-                item.item as string,
+            for (let existingItem of existingItems) {
+              const availableQty = await this.fyo.db.getStockQuantity(
+                existingItem.item as string,
                 undefined,
                 undefined,
                 undefined,
-                item.batch
+                existingItem.batch
               );
               if (
-                item.batch != null &&
+                existingItem.batch != null &&
                 availableQty != null &&
-                availableQty > (item.quantity as number)
+                availableQty > (existingItem.quantity as number)
               ) {
-                const currentQty = item.quantity ?? 0;
-                await item.set('quantity', currentQty + addQty);
+                const currentQty = existingItem.quantity ?? 0;
+                await existingItem.set('quantity', currentQty + addQty);
+
+                if (item.hasSerialNumber) {
+                  const qty = currentQty + addQty;
+
+                  const serialNumbers =
+                    await getExistingActiveSerialNumbersForItem(
+                      this.fyo,
+                      itemName,
+                      qty
+                    );
+
+                  if (serialNumbers) {
+                    this.itemSerialNumbers[itemName] = serialNumbers;
+                    await existingItem.set('serialNumber', serialNumbers);
+                  }
+                }
+
                 await this.applyPricingRule();
                 await this.sinvDoc.runFormulas();
                 return;
@@ -920,10 +976,32 @@ export default defineComponent({
 
           await this.sinvDoc.append('items', {
             rate: item.rate,
-            item: item.name,
+            item: itemName,
             quantity: addQty,
             hsnCode: itemsHsncode,
           });
+
+          if (item.hasSerialNumber) {
+            const serialNumbers = await getExistingActiveSerialNumbersForItem(
+              this.fyo,
+              itemName,
+              addQty
+            );
+
+            if (serialNumbers) {
+              this.itemSerialNumbers[itemName] = serialNumbers;
+
+              const newItemRows = this.sinvDoc.items?.filter(
+                (row) => row.item === itemName && !row.isFreeItem
+              );
+
+              if (newItemRows && newItemRows.length > 0) {
+                const newRow = newItemRows[newItemRows.length - 1];
+                await newRow.set('serialNumber', serialNumbers);
+              }
+            }
+          }
+
           await this.applyPricingRule();
           await this.sinvDoc.runFormulas();
           return;
@@ -937,15 +1015,30 @@ export default defineComponent({
           const currentQty = existingItems[0].quantity ?? 0;
           const addQty = quantity ?? 1;
           if (isInventoryItem) {
-            const availableQty = this.itemQtyMap[item.name]?.availableQty ?? 0;
+            const availableQty = this.itemQtyMap[itemName]?.availableQty ?? 0;
             if (currentQty + addQty > availableQty) {
               throw new ValidationError(
-                'Cannot add more than the available quantity'
+                `Cannot add more than the available quantity for ${itemName}`
               );
             }
           }
 
           await existingItems[0].set('quantity', currentQty + addQty);
+          if (item.hasSerialNumber) {
+            const qty = currentQty + addQty;
+
+            const serialNumbers = await getExistingActiveSerialNumbersForItem(
+              this.fyo,
+              itemName,
+              qty
+            );
+
+            if (serialNumbers) {
+              this.itemSerialNumbers[itemName] = serialNumbers;
+              await existingItems[0].set('serialNumber', serialNumbers);
+            }
+          }
+
           await this.applyPricingRule();
           await this.sinvDoc.runFormulas();
           if (isInventoryItem) {
@@ -960,24 +1053,48 @@ export default defineComponent({
 
         await this.sinvDoc.append('items', {
           rate: item.rate,
-          item: item.name,
+          item: itemName,
           quantity: quantity ? quantity : 1,
           hsnCode: itemsHsncode,
         });
 
         if (this.sinvDoc.priceList) {
-          let itemData = this.sinvDoc.items?.filter(
-            (val) => val.item == item.name
+          const itemData = this.sinvDoc.items?.filter(
+            (val) => val.item == itemName
           ) as SalesInvoiceItem[];
 
-          itemData[0].rate = await getItemRateFromPriceList(
-            itemData[0],
-            this.sinvDoc.priceList
+          if (itemData.length > 0) {
+            itemData[0].rate = await getItemRateFromPriceList(
+              itemData[0],
+              this.sinvDoc.priceList
+            );
+          }
+        }
+
+        if (item.hasSerialNumber) {
+          const qty = quantity ?? 1;
+
+          const serialNumbers = await getExistingActiveSerialNumbersForItem(
+            this.fyo,
+            itemName,
+            qty
           );
+
+          if (serialNumbers) {
+            this.itemSerialNumbers[itemName] = serialNumbers;
+
+            const newItemRows = this.sinvDoc.items?.filter(
+              (row) => row.item === itemName && !row.isFreeItem
+            );
+
+            if (newItemRows && newItemRows.length > 0) {
+              const newRow = newItemRows[newItemRows.length - 1];
+              await newRow.set('serialNumber', serialNumbers);
+            }
+          }
         }
 
         await this.applyPricingRule();
-
         await this.sinvDoc.runFormulas();
       } catch (error) {
         return showToast({

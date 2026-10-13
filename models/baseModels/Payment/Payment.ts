@@ -461,7 +461,18 @@ export class Payment extends Transactional {
       );
 
       const previousOutstandingAmount = referenceDoc.outstandingAmount as Money;
-      const outstandingAmount = previousOutstandingAmount.sub(row.amount!);
+      const isReturnInvoice = (referenceDoc as Invoice).isReturn;
+
+      let outstandingAmount: Money;
+
+      if (isReturnInvoice) {
+        const paymentAmount = row.amount!.abs();
+        const previous = previousOutstandingAmount.abs();
+
+        outstandingAmount = previous.sub(paymentAmount);
+      } else {
+        outstandingAmount = previousOutstandingAmount.sub(row.amount!);
+      }
       await referenceDoc.setAndSync({ outstandingAmount });
     }
   }
@@ -505,11 +516,10 @@ export class Payment extends Transactional {
         ref.referenceType!,
         ref.referenceName
       );
-
-      const outstandingAmount = (refDoc.outstandingAmount as Money).add(
-        ref.amount!
-      );
-
+      const isReturnInvoice = (refDoc as Invoice).isReturn;
+      const outstandingAmount = isReturnInvoice
+        ? (refDoc.outstandingAmount as Money).sub(ref.amount!)
+        : (refDoc.outstandingAmount as Money).add(ref.amount!);
       await refDoc.setAndSync({ outstandingAmount });
     }
   }
@@ -723,13 +733,16 @@ export class Payment extends Transactional {
       }
 
       if (!this.totalAmount) {
+        this.totalAmount = this.fyo.pesa(0);
         for (const row of this.for ?? []) {
           const referenceDoc = (await this.fyo.doc.getDoc(
             row.referenceType as string,
             row.referenceName as string
           )) as Invoice;
 
-          this.totalAmount = referenceDoc.outstandingAmount?.abs();
+          this.totalAmount = (this.totalAmount as Money).add(
+            referenceDoc.outstandingAmount?.abs() ?? this.fyo.pesa(0)
+          );
         }
       }
 
